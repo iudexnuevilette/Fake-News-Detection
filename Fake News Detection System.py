@@ -1,289 +1,165 @@
-# Fake News Detection System with Streamlit and Neural Network
-# A comprehensive solution for detecting fake news using NLP and deep learning
-
-import numpy as np
-import pandas as pd
-import re
-import string
-import nltk
 import streamlit as st
-from nltk.corpus import stopwords
-from nltk.stem import PorterStemmer, WordNetLemmatizer
-from sklearn.model_selection import train_test_split
+import pandas as pd
+import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
-from sklearn.tree import DecisionTreeClassifier
-from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
-from sklearn.metrics import accuracy_score, confusion_matrix, classification_report
-import tensorflow as tf
+from sklearn.metrics import accuracy_score, confusion_matrix
 from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import Dense, Dropout
-import joblib
-import matplotlib.pyplot as plt
+from tensorflow.keras.layers import Dense
+import nltk
+from nltk.corpus import stopwords
+from nltk.tokenize import word_tokenize
 import seaborn as sns
-import warnings
-warnings.filterwarnings('ignore')
+import matplotlib.pyplot as plt
+import os
+import time
 
-# Download required NLTK resources
-nltk.download('punkt')
-nltk.download('stopwords')
-nltk.download('wordnet')
-nltk.download('punkt_tab')
+# Initialize NLTK resources
+nltk_data_path = os.path.join(os.getcwd(), 'nltk_data')
+nltk.data.path.append(nltk_data_path)
+nltk.download('punkt', download_dir=nltk_data_path, quiet=True)
+nltk.download('stopwords', download_dir=nltk_data_path, quiet=True)
+nltk.download('punkt_tab', download_dir=nltk_data_path, quiet=True)
 
-class FakeNewsDetector:
-    def __init__(self):
-        self.stemmer = PorterStemmer()
-        self.lemmatizer = WordNetLemmatizer()
-        self.stop_words = set(stopwords.words('english'))
-        self.model = None
-        self.vectorizer = None
-        self.model_type = None
+# Initialize session state for models and vectorizer
+if 'lr_model' not in st.session_state:
+    st.session_state.lr_model = None
+if 'nn_model' not in st.session_state:
+    st.session_state.nn_model = None
+if 'vectorizer' not in st.session_state:
+    st.session_state.vectorizer = None
+if 'accuracy_lr' not in st.session_state:
+    st.session_state.accuracy_lr = None
+if 'accuracy_nn' not in st.session_state:
+    st.session_state.accuracy_nn = None
 
-    def load_data(self, filepath):
-        """Load the dataset from the given filepath"""
-        try:
-            data = pd.read_csv(filepath)
-            st.success(f"Data loaded successfully with shape: {data.shape}")
-            return data
-        except Exception as e:
-            st.error(f"Error loading data: {e}")
-            return None
+# Simple text preprocessing
+stop_words = set(stopwords.words('english'))
+def preprocess_text(text):
+    tokens = word_tokenize(str(text).lower())
+    tokens = [t for t in tokens if t.isalpha() and t not in stop_words]
+    return ' '.join(tokens)
 
-    def preprocess_text(self, text):
-        """Preprocess text by removing special characters, stemming, and lemmatization"""
-        if isinstance(text, float):
-            return ""
-        text = text.lower()
-        text = re.sub(r'https?://\S+|www\.\S+', '', text)
-        text = re.sub(r'<.*?>', '', text)
-        text = text.translate(str.maketrans('', '', string.punctuation))
-        text = re.sub(r'\s+', ' ', text).strip()
-        tokens = nltk.word_tokenize(text)
-        tokens = [self.lemmatizer.lemmatize(word) for word in tokens if word not in self.stop_words]
-        return ' '.join(tokens)
+# Streamlit app
+st.title("Fake News Detection System")
 
-    def prepare_data(self, data, text_column, label_column):
-        """Prepare data for training by preprocessing text"""
-        df = data.copy()
-        df[text_column] = df[text_column].fillna('')
-        st.info("Preprocessing text data...")
-        df['processed_text'] = df[text_column].apply(self.preprocess_text)
-        X = df['processed_text']
-        y = df[label_column].map({'REAL': 0, 'FAKE': 1})  # Convert labels to numeric
-        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-        st.success(f"Training set size: {X_train.shape[0]}, Test set size: {X_test.shape[0]}")
-        return X_train, X_test, y_train, y_test
+# Sidebar for navigation
+page = st.sidebar.selectbox("Choose a page", ["Train Model", "Predict"])
 
-    def train_model(self, X_train, y_train, model_type='logistic'):
-        """Train a selected model on the preprocessed data"""
-        self.model_type = model_type
-        st.info(f"Training {model_type} model...")
-        self.vectorizer = TfidfVectorizer(max_features=5000, ngram_range=(1, 2), stop_words='english')
-        X_train_vec = self.vectorizer.fit_transform(X_train)
-
-        if model_type == 'logistic':
-            self.model = LogisticRegression(C=1.0, solver='liblinear', max_iter=1000)
-            self.model.fit(X_train_vec, y_train)
-        elif model_type == 'decision_tree':
-            self.model = DecisionTreeClassifier(max_depth=10, random_state=42)
-            self.model.fit(X_train_vec, y_train)
-        elif model_type == 'random_forest':
-            self.model = RandomForestClassifier(n_estimators=100, random_state=42)
-            self.model.fit(X_train_vec, y_train)
-        elif model_type == 'gradient_boosting':
-            self.model = GradientBoostingClassifier(n_estimators=100, random_state=42)
-            self.model.fit(X_train_vec, y_train)
-        elif model_type == 'neural_network':
-            self.model = Sequential([
-                Dense(128, activation='relu', input_shape=(X_train_vec.shape[1],)),
-                Dropout(0.3),
-                Dense(64, activation='relu'),
-                Dropout(0.3),
-                Dense(1, activation='sigmoid')
-            ])
-            self.model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
-            X_train_dense = X_train_vec.toarray()
-            self.model.fit(X_train_dense, y_train, epochs=10, batch_size=32, verbose=0)
-        else:
-            raise ValueError("Model type not recognized")
-        st.success("Model training completed.")
-        return self.model
-
-    def evaluate_model(self, X_test, y_test):
-        """Evaluate the trained model on test data"""
-        if self.model is None:
-            st.error("Model not trained yet. Please train the model first.")
-            return None, None, None
-        X_test_vec = self.vectorizer.transform(X_test)
-        if self.model_type == 'neural_network':
-            X_test_vec = X_test_vec.toarray()
-            y_pred = (self.model.predict(X_test_vec) > 0.5).astype(int).flatten()
-            y_pred_proba = self.model.predict(X_test_vec)
-        else:
-            y_pred = self.model.predict(X_test_vec)
-            y_pred_proba = self.model.predict_proba(X_test_vec)
-        accuracy = accuracy_score(y_test, y_pred)
-        conf_matrix = confusion_matrix(y_test, y_pred)
-        report = classification_report(y_test, y_pred, target_names=['Real', 'Fake'])
-        st.write(f"**Model Accuracy**: {accuracy:.4f}")
-        st.write("**Confusion Matrix**:")
-        fig, ax = plt.subplots(figsize=(8, 6))
-        sns.heatmap(conf_matrix, annot=True, fmt='d', cmap='Blues', 
-                    xticklabels=['Real', 'Fake'], yticklabels=['Real', 'Fake'])
-        plt.xlabel('Predicted')
-        plt.ylabel('Actual')
-        plt.title('Confusion Matrix')
-        st.pyplot(fig)
-        st.write("**Classification Report**:")
-        st.text(report)
-        return accuracy, conf_matrix, report
-
-    def save_model(self, filepath):
-        """Save the trained model to disk"""
-        if self.model is None:
-            st.error("Model not trained yet. Please train the model first.")
-            return False
-        try:
-            if self.model_type == 'neural_network':
-                self.model.save(filepath)
-            else:
-                joblib.dump({'model': self.model, 'vectorizer': self.vectorizer}, filepath)
-            st.success(f"Model saved to {filepath}")
-            return True
-        except Exception as e:
-            st.error(f"Error saving model: {e}")
-            return False
-
-    def load_model(self, filepath, model_type):
-        """Load a previously trained model from disk"""
-        self.model_type = model_type
-        try:
-            if model_type == 'neural_network':
-                self.model = tf.keras.models.load_model(filepath)
-                self.vectorizer = joblib.load('vectorizer.pkl')  # Vectorizer saved separately
-            else:
-                loaded = joblib.load(filepath)
-                self.model = loaded['model']
-                self.vectorizer = loaded['vectorizer']
-            st.success(f"Model loaded from {filepath}")
-            return True
-        except Exception as e:
-            st.error(f"Error loading model: {e}")
-            return False
-
-    def predict(self, text):
-        """Predict whether the given text is fake or real news"""
-        if self.model is None or self.vectorizer is None:
-            st.error("Model or vectorizer not loaded. Please train or load a model first.")
-            return None
-        processed_text = self.preprocess_text(text)
-        X_vec = self.vectorizer.transform([processed_text])
-        if self.model_type == 'neural_network':
-            X_vec = X_vec.toarray()
-            prediction = (self.model.predict(X_vec) > 0.5).astype(int)[0]
-            probability = self.model.predict(X_vec)[0][0]
-        else:
-            prediction = self.model.predict(X_vec)[0]
-            probability = np.max(self.model.predict_proba(X_vec))
-        result = {
-            'prediction': 'FAKE' if prediction == 1 else 'REAL',
-            'confidence': float(probability)
-        }
-        return result
-
-# Streamlit UI
-def main():
-    st.set_page_config(page_title="Fake News Detector", layout="wide")
+if page == "Train Model":
+    st.header("Train Model")
     
-    # Custom CSS for transparent, glassmorphism UI
-    st.markdown("""
-        <style>
-        .main {
-            background: rgba(255, 255, 255, 0.1);
-            border-radius: 10px;
-            backdrop-filter: blur(10px);
-            -webkit-backdrop-filter: blur(10px);
-            border: 1px solid rgba(255, 255, 255, 0.3);
-            padding: 20px;
-        }
-        .stButton>button {
-            background: rgba(255, 255, 255, 0.2);
-            color: white;
-            border: 1px solid rgba(255, 255, 255, 0.3);
-            border-radius: 5px;
-            padding: 10px 20px;
-        }
-        .stButton>button:hover {
-            background: rgba(255, 255, 255, 0.4);
-        }
-        .stTextInput>div>input {
-            background: rgba(255, 255, 255, 0.1);
-            color: white;
-            border: 1px solid rgba(255, 255, 255, 0.3);
-            border-radius: 5px;
-        }
-        </style>
-    """, unsafe_allow_html=True)
-
-    st.title("📰 Fake News Detector")
-    st.markdown("A tool to detect fake news using NLP and machine learning techniques.")
-
-    detector = FakeNewsDetector()
-
-    # Sidebar for navigation
-    st.sidebar.header("Navigation")
-    page = st.sidebar.radio("Go to", ["Home", "Train Model", "Predict", "Load Model"])
-
-    if page == "Home":
-        st.header("Welcome to Fake News Detector")
-        st.write("""
-            This application allows you to:
-            - Upload a dataset and train various models (including a neural network) to detect fake news.
-            - Make predictions on new text inputs.
-            - Load pre-trained models for predictions.
-            - Visualize model performance with confusion matrices and classification reports.
-        """)
-
-    elif page == "Train Model":
-        st.header("Train a Model")
-        uploaded_file = st.file_uploader("Upload your dataset (CSV)", type="csv")
-        model_type = st.selectbox("Select Model Type", 
-                                 ["logistic", "decision_tree", "random_forest", "gradient_boosting", "neural_network"])
-        text_column = st.text_input("Text Column Name", value="text")
-        label_column = st.text_input("Label Column Name", value="label")
+    # File uploader
+    uploaded_file = st.file_uploader("Upload your CSV dataset", type="csv")
+    
+    if uploaded_file is not None:
+        # Read dataset
+        start = time.time()
+        df = pd.read_csv(uploaded_file)
+        st.write(f"Dataset loaded in {time.time() - start:.2f} seconds")
         
-        if st.button("Train Model"):
-            if uploaded_file is not None:
-                data = pd.read_csv(uploaded_file)
-                X_train, X_test, y_train, y_test = detector.prepare_data(data, text_column, label_column)
-                detector.train_model(X_train, y_train, model_type)
-                detector.evaluate_model(X_test, y_test)
-                detector.save_model(f"fake_news_detector_{model_type}.pkl")
-            else:
-                st.error("Please upload a dataset.")
-
-    elif page == "Predict":
-        st.header("Make a Prediction")
-        sample_text = st.text_area("Enter text to classify", 
-                                  "Enter news article text here...")
+        # Input column names
+        text_col = st.text_input("Enter the name of the text column", value="text")
+        label_col = st.text_input("Enter the name of the label column", value="label")
+        
+        if text_col in df.columns and label_col in df.columns:
+            # Preprocess data
+            start = time.time()
+            df['processed_text'] = df[text_col].apply(preprocess_text)
+            vectorizer = TfidfVectorizer(max_features=1000)
+            X = vectorizer.fit_transform(df['processed_text'])
+            y = df[label_col].map({'FAKE': 0, 'REAL': 1})
+            st.write(f"Preprocessing done in {time.time() - start:.2f} seconds")
+            
+            # Train models
+            if st.button("Train Models"):
+                # Split data (simple split for small dataset)
+                train_size = int(0.8 * X.shape[0])
+                X_train, X_test = X[:train_size], X[train_size:]
+                y_train, y_test = y[:train_size], y[train_size:]
+                
+                # Logistic Regression
+                start = time.time()
+                lr_model = LogisticRegression(max_iter=100)
+                lr_model.fit(X_train, y_train)
+                st.session_state.lr_model = lr_model
+                lr_pred = lr_model.predict(X_test)
+                st.session_state.accuracy_lr = accuracy_score(y_test, lr_pred)
+                st.write(f"Logistic Regression trained in {time.time() - start:.2f} seconds")
+                st.write(f"Logistic Regression Accuracy: {st.session_state.accuracy_lr:.2f}")
+                
+                # Neural Network
+                start = time.time()
+                nn_model = Sequential([
+                    Dense(16, activation='relu', input_shape=(X.shape[1],)),
+                    Dense(1, activation='sigmoid')
+                ])
+                nn_model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
+                nn_model.fit(X_train.toarray(), y_train, epochs=5, batch_size=32, verbose=0)
+                st.session_state.nn_model = nn_model
+                nn_pred = (nn_model.predict(X_test.toarray(), verbose=0) > 0.5).astype(int).flatten()
+                st.session_state.accuracy_nn = accuracy_score(y_test, nn_pred)
+                st.write(f"Neural Network trained in {time.time() - start:.2f} seconds")
+                st.write(f"Neural Network Accuracy: {st.session_state.accuracy_nn:.2f}")
+                
+                # Store vectorizer for predictions
+                st.session_state.vectorizer = vectorizer
+                
+                # Confusion Matrix Visualization
+                st.subheader("Confusion Matrix")
+                fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 4))
+                
+                # Logistic Regression Confusion Matrix
+                cm_lr = confusion_matrix(y_test, lr_pred)
+                sns.heatmap(cm_lr, annot=True, fmt='d', cmap='Blues', ax=ax1)
+                ax1.set_title("Logistic Regression")
+                ax1.set_xlabel("Predicted")
+                ax1.set_ylabel("Actual")
+                
+                # Neural Network Confusion Matrix
+                cm_nn = confusion_matrix(y_test, nn_pred)
+                sns.heatmap(cm_nn, annot=True, fmt='d', cmap='Blues', ax=ax2)
+                ax2.set_title("Neural Network")
+                ax2.set_xlabel("Predicted")
+                ax2.set_ylabel("Actual")
+                
+                st.pyplot(fig)
+                
+                st.success("Models trained successfully! Switch to the 'Predict' page to make predictions.")
+        else:
+            st.error("Specified columns not found in the dataset.")
+else:
+    st.header("Predict")
+    
+    if st.session_state.lr_model is None or st.session_state.nn_model is None or st.session_state.vectorizer is None:
+        st.warning("Please train the models first on the 'Train Model' page.")
+    else:
+        # Input for prediction
+        user_input = st.text_area("Enter text to predict if it's fake or real news", height=200)
+        
         if st.button("Predict"):
-            if sample_text:
-                prediction = detector.predict(sample_text)
-                if prediction:
-                    st.write(f"**Prediction**: {prediction['prediction']} (Confidence: {prediction['confidence']:.2f})")
+            if user_input.strip() == "":
+                st.error("Please enter some text to predict.")
             else:
-                st.error("No model loaded. Please train or load a model first.")
-
-    elif page == "Load Model":
-        st.header("Load a Pre-trained Model")
-        model_type = st.selectbox("Select Model Type", 
-                                 ["logistic", "decision_tree", "random_forest", "gradient_boosting", "neural_network"])
-        uploaded_model = st.file_uploader("Upload your model file (.pkl for non-neural, .h5 for neural network)", type=["pkl", "h5"])
-        if st.button("Load Model"):
-            if uploaded_model is not None:
-                detector.load_model(uploaded_model.name, model_type)
-            else:
-                st.error("Please upload a model file.")
-
-if __name__ == "__main__":
-    main()
+                # Preprocess input
+                start = time.time()
+                processed_input = preprocess_text(user_input)
+                X_input = st.session_state.vectorizer.transform([processed_input])
+                
+                # Logistic Regression prediction
+                lr_pred = st.session_state.lr_model.predict(X_input)[0]
+                lr_label = 'REAL' if lr_pred == 1 else 'FAKE'
+                
+                # Neural Network prediction
+                nn_pred = (st.session_state.nn_model.predict(X_input.toarray(), verbose=0) > 0.5).astype(int)[0][0]
+                nn_label = 'REAL' if nn_pred == 1 else 'FAKE'
+                
+                # Display results
+                st.write(f"**Logistic Regression Prediction**: {lr_label}")
+                st.write(f"**Neural Network Prediction**: {nn_label}")
+                st.write(f"Prediction time: {time.time() - start:.2f} seconds")
+                
+                # Display training accuracy
+                st.subheader("Model Performance (from Training)")
+                st.write(f"Logistic Regression Accuracy: {st.session_state.accuracy_lr:.2f}")
+                st.write(f"Neural Network Accuracy: {st.session_state.accuracy_nn:.2f}")
